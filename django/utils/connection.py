@@ -1,3 +1,5 @@
+from contextvars import ContextVar
+
 from asgiref.local import Local
 
 from django.conf import settings as django_settings
@@ -39,6 +41,7 @@ class BaseConnectionHandler:
     def __init__(self, settings=None):
         self._settings = settings
         self._connections = Local(self.thread_critical)
+        self._async_connection = ContextVar("async_connection")
 
     @cached_property
     def settings(self):
@@ -79,6 +82,13 @@ class BaseConnectionHandler:
             # If initialized_only is True, return only initialized connections.
             if not initialized_only or hasattr(self._connections, alias)
         ]
+
+    @property
+    def last_async_connection(self):
+        try:
+            return self._async_connection.get()
+        except LookupError:
+            raise RuntimeError("No async connections have been created.")
 
     def close_all(self):
         for conn in self.all(initialized_only=True):
