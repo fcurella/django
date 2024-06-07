@@ -1,4 +1,5 @@
 import pkgutil
+from contextlib import asynccontextmanager
 from importlib import import_module
 
 from django.conf import settings
@@ -192,6 +193,18 @@ class ConnectionHandler(BaseConnectionHandler):
         db = self.settings[alias]
         backend = load_backend(db["ENGINE"])
         return backend.DatabaseWrapper(db, alias)
+
+    @asynccontextmanager
+    async def new_connection(self, using=DEFAULT_DB_ALIAS):
+        conn = self.create_connection(using)
+        token = self._async_connection.set(conn)
+        try:
+            yield conn
+        except NotSupportedError as exc:
+            raise NotSupportedError(f"Backend {conn} doesn't support async.") from exc
+        finally:
+            await conn.aclose()
+            self._async_connection.reset(token)
 
 
 class ConnectionRouter:
