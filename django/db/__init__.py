@@ -14,7 +14,7 @@ from django.db.utils import (
     OperationalError,
     ProgrammingError,
 )
-from django.utils.connection import ConnectionProxy
+from django.utils.connection import ConnectionProxy, _async_connection
 
 __all__ = [
     "close_old_connections",
@@ -35,6 +35,38 @@ __all__ = [
 ]
 
 connections = ConnectionHandler()
+
+
+class new_connection:
+    def __init__(self, using=DEFAULT_DB_ALIAS):
+        self.using = using
+
+    async def __aenter__(self):
+        self.force_rollback = False
+        if connections._in_test is True:
+            try:
+                _async_connection.get()
+            except LookupError:
+                # this is the first conneciton, ie: the outermost one.
+                self.force_rollback = True
+
+        self.conn = connections.create_connection(self.using)
+        self.token = _async_connection.set(self.conn)
+        if self.force_rollback is True:
+            await self.conn.aset_autocommit(False)
+
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        autocommit = await self.conn.aget_autocommit()
+        if autocommit is False:
+            if exc_type is None and self.force_rollback is False:
+                await self.conn.acommit()
+            else:
+                await self.conn.arollback()
+        await self.conn.aclose()
+        _async_connection.reset(self.token)
+
 
 router = ConnectionRouter()
 

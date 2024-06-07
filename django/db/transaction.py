@@ -40,9 +40,19 @@ def commit(using=None):
     get_connection(using).commit()
 
 
+async def acommit(using=None):
+    """Commit a transaction."""
+    await get_aconnection().acommit()
+
+
 def rollback(using=None):
     """Roll back a transaction."""
     get_connection(using).rollback()
+
+
+async def arollback(using=None):
+    """Roll back a transaction."""
+    await get_aconnection().arollback()
 
 
 def savepoint(using=None):
@@ -97,6 +107,23 @@ def set_rollback(rollback, using=None):
     return get_connection(using).set_rollback(rollback)
 
 
+def aset_rollback(rollback, connection=None):
+    """
+    Set or unset the "needs rollback" flag -- for *advanced use* only.
+
+    When `rollback` is `True`, trigger a rollback when exiting the innermost
+    enclosing atomic block that has `savepoint=True` (that's the default). Use
+    this to force a rollback without raising an exception.
+
+    When `rollback` is `False`, prevent such a rollback. Use this only after
+    rolling back to a known-good state! Otherwise, you break the atomic block
+    and data corruption may occur.
+    """
+    if connection is None:
+        connection = get_aconnection()
+    return connection.set_rollback(rollback)
+
+
 @contextmanager
 def mark_for_rollback_on_error(using=None):
     """
@@ -120,6 +147,35 @@ def mark_for_rollback_on_error(using=None):
         yield
     except Exception as exc:
         connection = get_connection(using)
+        if connection.in_atomic_block:
+            connection.needs_rollback = True
+            connection.rollback_exc = exc
+        raise
+
+
+@contextmanager
+def amark_for_rollback_on_error(using=None):
+    """
+    Internal low-level utility to mark a transaction as "needs rollback" when
+    an exception is raised while not enforcing the enclosed block to be in a
+    transaction. This is needed by Model.save() and friends to avoid starting a
+    transaction when in autocommit mode and a single query is executed.
+
+    It's equivalent to:
+
+        connection = get_connection(using)
+        if connection.get_autocommit():
+            yield
+        else:
+            with transaction.atomic(using=using, savepoint=False):
+                yield
+
+    but it uses low-level utilities to avoid performance overhead.
+    """
+    try:
+        yield
+    except Exception as exc:
+        connection = get_aconnection(using)
         if connection.in_atomic_block:
             connection.needs_rollback = True
             connection.rollback_exc = exc
@@ -305,6 +361,107 @@ class Atomic(ContextDecorator):
                     connection.connection = None
                 else:
                     connection.set_autocommit(True)
+            # Outermost block exit when autocommit was disabled.
+            elif not connection.savepoint_ids and not connection.commit_on_exit:
+                if connection.closed_in_transaction:
+                    connection.connection = None
+                else:
+                    connection.in_atomic_block = False
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        connection = get_aconnection()
+        print(f"{id(connection)} __aexit__")
+        breakpoint()
+
+        if connection.in_atomic_block:
+            connection.atomic_blocks.pop()
+
+        print(f"{id(connection)}: {connection.savepoint_ids} sids")
+
+        if connection.savepoint_ids:
+            sid = connection.savepoint_ids.pop()
+        else:
+            # Prematurely unset this flag to allow using commit or rollback.
+            connection.in_atomic_block = False
+
+        try:
+            if connection.closed_in_transaction:
+                # The database will perform a rollback by itself.
+                # Wait until we exit the outermost block.
+                pass
+
+            elif exc_type is None and not connection.needs_rollback:
+                if connection.in_atomic_block:
+                    # Release savepoint if there is one
+                    if sid is not None:
+                        try:
+                            await connection.asavepoint_commit(sid)
+                            print(f"{id(connection)} {sid} asavepoint_commit")
+                        except DatabaseError:
+                            print(f"{id(connection)} {sid} asavepoint_rollback")
+                            try:
+                                await connection.asavepoint_rollback(sid)
+                                # The savepoint won't be reused. Release it to
+                                # minimize overhead for the database server.
+                                await connection.asavepoint_commit(sid)
+                            except Error:
+                                # If rolling back to a savepoint fails, mark for
+                                # rollback at a higher level and avoid shadowing
+                                # the original exception.
+                                connection.needs_rollback = True
+                            raise
+                else:
+                    # Commit transaction
+                    try:
+                        print(f"{id(connection)} atomic acommit")
+                        await connection.acommit()
+                    except DatabaseError:
+                        try:
+                            print(f"{id(connection)} atomic arollback")
+                            await connection.arollback()
+                        except Error:
+                            # An error during rollback means that something
+                            # went wrong with the connection. Drop it.
+                            await connection.aclose()
+                        raise
+            else:
+                # This flag will be set to True again if there isn't a savepoint
+                # allowing to perform the rollback at this level.
+                connection.needs_rollback = False
+
+                if connection.in_atomic_block:
+                    # Roll back to savepoint if there is one, mark for rollback
+                    # otherwise.
+                    if sid is None:
+                        connection.needs_rollback = True
+                    else:
+                        try:
+                            await connection.asavepoint_rollback(sid)
+                            # The savepoint won't be reused. Release it to
+                            # minimize overhead for the database server.
+                            await connection.asavepoint_commit(sid)
+                        except Error:
+                            # If rolling back to a savepoint fails, mark for
+                            # rollback at a higher level and avoid shadowing
+                            # the original exception.
+                            connection.needs_rollback = True
+                else:
+                    # Roll back transaction
+                    try:
+                        print(f"{id(connection)} atomic arollback")
+                        await connection.arollback()
+                    except Error:
+                        # An error during rollback means that something
+                        # went wrong with the connection. Drop it.
+                        await connection.aclose()
+
+        finally:
+            # Outermost block exit when autocommit was enabled.
+            if not connection.in_atomic_block:
+                if connection.closed_in_transaction:
+                    connection.connection = None
+                else:
+                    await connection.aset_autocommit(True)
             # Outermost block exit when autocommit was disabled.
             elif not connection.savepoint_ids and not connection.commit_on_exit:
                 if connection.closed_in_transaction:

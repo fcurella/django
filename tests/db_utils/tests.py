@@ -1,12 +1,17 @@
 """Tests for django.db.utils."""
 
 import unittest
+from unittest.mock import AsyncMock, patch
+
+from asgiref.sync import async_to_sync
 
 from django.core.exceptions import ImproperlyConfigured
-from django.db import DEFAULT_DB_ALIAS, ProgrammingError, connection
+from django.db import DEFAULT_DB_ALIAS, ProgrammingError, connection, new_connection
 from django.db.utils import ConnectionHandler, load_backend
 from django.test import SimpleTestCase, TestCase
 from django.utils.connection import ConnectionDoesNotExist
+
+from .models import Reporter
 
 
 class ConnectionHandlerTests(SimpleTestCase):
@@ -59,6 +64,27 @@ class ConnectionHandlerTests(SimpleTestCase):
         with self.assertRaisesMessage(ConnectionDoesNotExist, msg):
             conns["nonexistent"]
 
+    @patch(
+        "django.db.backends.dummy.base.DatabaseWrapper.aclose",
+        create=True,
+        new_callable=AsyncMock,
+    )
+    async def test_new_connection(self, database_wrapper):
+        conns = ConnectionHandler(
+            {DEFAULT_DB_ALIAS: {"ENGINE": "django.db.backends.dummy"}}
+        )
+        with self.assertRaises(RuntimeError):
+            conns.last_async_connection
+
+        async with conns.new_connection():
+            conn1 = conns.last_async_connection
+            async with conns.new_connection():
+                conn2 = conns.last_async_connection
+                self.assertNotEqual(conn1, conn2)
+            self.assertNotEqual(conn1, conn2)
+        with self.assertRaises(RuntimeError):
+            conns.last_async_connection
+
 
 class DatabaseErrorWrapperTests(TestCase):
     @unittest.skipUnless(connection.vendor == "postgresql", "PostgreSQL test")
@@ -77,6 +103,19 @@ class DatabaseErrorWrapperTests(TestCase):
         else:
             self.assertIsNotNone(cm.exception.__cause__.pgcode)
             self.assertIsNotNone(cm.exception.__cause__.pgerror)
+
+    @unittest.skipUnless(connection.vendor == "postgresql (async)", "PostgreSQL test")
+    def test_new_connection(self):
+        async def coro():
+            async with new_connection():
+                async with new_connection():
+                    await Reporter(first_name="Sarah", last_name="Hatoff").asave()
+                reporter = await Reporter.objects.aget(last_name="Hatoff")
+                self.assertEqual(reporter.first_name, "Sarah")
+
+        async_to_sync(coro)()
+        Reporter.objects.get(first_name="Sarah", last_name="Hatoff")
+        self.assertEqual(Reporter.objects.count(), 1)
 
 
 class LoadBackendTests(SimpleTestCase):
