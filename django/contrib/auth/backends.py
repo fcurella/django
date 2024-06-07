@@ -12,6 +12,9 @@ class BaseBackend:
     def get_user(self, user_id):
         return None
 
+    async def aget_user(self, user_id):
+        return None
+
     def get_user_permissions(self, user_obj, obj=None):
         return set()
 
@@ -155,6 +158,13 @@ class ModelBackend(BaseBackend):
     def get_user(self, user_id):
         try:
             user = UserModel._default_manager.get(pk=user_id)
+        except UserModel.DoesNotExist:
+            return None
+        return user if self.user_can_authenticate(user) else None
+
+    async def aget_user(self, user_id):
+        try:
+            user = await UserModel._default_manager.aget(pk=user_id)
         except UserModel.DoesNotExist:
             return None
         return user if self.user_can_authenticate(user) else None

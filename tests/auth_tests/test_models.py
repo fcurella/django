@@ -1,6 +1,5 @@
+import unittest
 from unittest import mock
-
-from asgiref.sync import sync_to_async
 
 from django.conf.global_settings import PASSWORD_HASHERS
 from django.contrib.auth import get_user_model
@@ -16,7 +15,7 @@ from django.contrib.auth.models import (
 )
 from django.contrib.contenttypes.models import ContentType
 from django.core import mail
-from django.db import connection, migrations
+from django.db import connection, migrations, new_connection
 from django.db.migrations.state import ModelState, ProjectState
 from django.db.models.signals import post_save
 from django.test import SimpleTestCase, TestCase, TransactionTestCase, override_settings
@@ -299,28 +298,30 @@ class AbstractUserTestCase(TestCase):
         finally:
             hasher.iterations = old_iterations
 
+    @unittest.skipUnless(
+        connection.vendor == "postgresql (async)", "PostgreSQL async tests"
+    )
     @override_settings(PASSWORD_HASHERS=PASSWORD_HASHERS)
     async def test_acheck_password_upgrade(self):
-        user = await sync_to_async(User.objects.create_user)(
-            username="user", password="foo"
-        )
-        initial_password = user.password
-        self.assertIs(await user.acheck_password("foo"), True)
-        hasher = get_hasher("default")
-        self.assertEqual("pbkdf2_sha256", hasher.algorithm)
+        async with new_connection():
+            user = await User.objects.acreate_user(username="user", password="foo")
+            initial_password = user.password
+            self.assertIs(await user.acheck_password("foo"), True)
+            hasher = get_hasher("default")
+            self.assertEqual("pbkdf2_sha256", hasher.algorithm)
 
-        old_iterations = hasher.iterations
-        try:
-            # Upgrade the password iterations.
-            hasher.iterations = old_iterations + 1
-            with mock.patch(
-                "django.contrib.auth.password_validation.password_changed"
-            ) as pw_changed:
-                self.assertIs(await user.acheck_password("foo"), True)
-                self.assertEqual(pw_changed.call_count, 0)
-            self.assertNotEqual(initial_password, user.password)
-        finally:
-            hasher.iterations = old_iterations
+            old_iterations = hasher.iterations
+            try:
+                # Upgrade the password iterations.
+                hasher.iterations = old_iterations + 1
+                with mock.patch(
+                    "django.contrib.auth.password_validation.password_changed"
+                ) as pw_changed:
+                    self.assertIs(await user.acheck_password("foo"), True)
+                    self.assertEqual(pw_changed.call_count, 0)
+                self.assertNotEqual(initial_password, user.password)
+            finally:
+                hasher.iterations = old_iterations
 
 
 class CustomModelBackend(ModelBackend):

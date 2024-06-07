@@ -137,7 +137,7 @@ class Group(models.Model):
 class UserManager(BaseUserManager):
     use_in_migrations = True
 
-    def _create_user(self, username, email, password, **extra_fields):
+    def _prepare_user(self, username, email, password, **extra_fields):
         """
         Create and save a user with the given username, email, and password.
         """
@@ -153,15 +153,32 @@ class UserManager(BaseUserManager):
         username = GlobalUserModel.normalize_username(username)
         user = self.model(username=username, email=email, **extra_fields)
         user.password = make_password(password)
+        return user
+
+    def _create_user(self, username, email, password, **extra_fields):
+        """For backward compatibility"""
+        user = self._prepare_user(username, email, password, **extra_fields)
         user.save(using=self._db)
         return user
 
     def create_user(self, username, email=None, password=None, **extra_fields):
         extra_fields.setdefault("is_staff", False)
         extra_fields.setdefault("is_superuser", False)
-        return self._create_user(username, email, password, **extra_fields)
+        user = self._create_user(
+            username=username, email=email, password=password, **extra_fields
+        )
+        return user
 
-    def create_superuser(self, username, email=None, password=None, **extra_fields):
+    async def acreate_user(self, username, email=None, password=None, **extra_fields):
+        extra_fields.setdefault("is_staff", False)
+        extra_fields.setdefault("is_superuser", False)
+        user = self._prepare_user(
+            username=username, email=email, password=password, **extra_fields
+        )
+        await user.asave(using=self._db)
+        return user
+
+    def _prepare_superuser(self, username, email=None, password=None, **extra_fields):
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
 
@@ -170,7 +187,20 @@ class UserManager(BaseUserManager):
         if extra_fields.get("is_superuser") is not True:
             raise ValueError("Superuser must have is_superuser=True.")
 
-        return self._create_user(username, email, password, **extra_fields)
+        user = self._prepare_user(username, email, password, **extra_fields)
+        return user
+
+    def create_superuser(self, username, email=None, password=None, **extra_fields):
+        user = self._prepare_superuser(username, email, password, **extra_fields)
+        user.save(using=self._db)
+        return user
+
+    async def acreate_superuser(
+        self, username, email=None, password=None, **extra_fields
+    ):
+        user = self._prepare_superuser(username, email, password, **extra_fields)
+        await user.asave(using=self._db)
+        return user
 
     def with_perm(
         self, perm, is_active=True, include_superusers=True, backend=None, obj=None

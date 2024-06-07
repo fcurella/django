@@ -42,5 +42,16 @@ class SessionStore(DBStore):
 
         return obj
 
+    async def acreate_model_instance(self, data):
+        obj = await super().acreate_model_instance(data)
+
+        try:
+            account_id = int(data.get("_auth_user_id"))
+        except (ValueError, TypeError):
+            account_id = None
+        obj.account_id = account_id
+
+        return obj
+
     def get_session_cookie_age(self):
         return 60 * 60 * 24  # One day.

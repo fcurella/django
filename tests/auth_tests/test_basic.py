@@ -1,10 +1,10 @@
-from asgiref.sync import sync_to_async
+import unittest
 
 from django.conf import settings
 from django.contrib.auth import aget_user, get_user, get_user_model
 from django.contrib.auth.models import AnonymousUser, User
 from django.core.exceptions import ImproperlyConfigured
-from django.db import IntegrityError
+from django.db import IntegrityError, connection, new_connection
 from django.http import HttpRequest
 from django.test import TestCase, override_settings
 from django.utils import translation
@@ -131,10 +131,14 @@ class TestGetUser(TestCase):
         user = get_user(request)
         self.assertIsInstance(user, AnonymousUser)
 
+    @unittest.skipUnless(
+        connection.vendor == "postgresql (async)", "PostgreSQL async tests"
+    )
     async def test_aget_user_anonymous(self):
         request = HttpRequest()
-        request.session = await self.client.asession()
-        user = await aget_user(request)
+        async with new_connection():
+            request.session = await self.client.asession()
+            user = await aget_user(request)
         self.assertIsInstance(user, AnonymousUser)
 
     def test_get_user(self):
@@ -171,13 +175,17 @@ class TestGetUser(TestCase):
             self.assertIsInstance(user, User)
             self.assertEqual(user.username, created_user.username)
 
+    @unittest.skipUnless(
+        connection.vendor == "postgresql (async)", "PostgreSQL async tests"
+    )
     async def test_aget_user(self):
-        created_user = await sync_to_async(User.objects.create_user)(
-            "testuser", "test@example.com", "testpw"
-        )
-        await self.client.alogin(username="testuser", password="testpw")
-        request = HttpRequest()
-        request.session = await self.client.asession()
-        user = await aget_user(request)
+        async with new_connection():
+            created_user = await User.objects.acreate_user(
+                "testuser", "test@example.com", "testpw"
+            )
+            await self.client.alogin(username="testuser", password="testpw")
+            request = HttpRequest()
+            request.session = await self.client.asession()
+            user = await aget_user(request)
         self.assertIsInstance(user, User)
         self.assertEqual(user.username, created_user.username)

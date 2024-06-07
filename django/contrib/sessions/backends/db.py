@@ -1,7 +1,5 @@
 import logging
 
-from asgiref.sync import sync_to_async
-
 from django.contrib.sessions.backends.base import CreateError, SessionBase, UpdateError
 from django.core.exceptions import SuspiciousOperation
 from django.db import DatabaseError, IntegrityError, router, transaction
@@ -144,19 +142,14 @@ class SessionStore(SessionBase):
         obj = await self.acreate_model_instance(data)
         using = router.db_for_write(self.model, instance=obj)
         try:
-            # This code MOST run in a transaction, so it requires
-            # @sync_to_async wrapping until transaction.atomic() supports
-            # async.
-            @sync_to_async
-            def sync_transaction():
-                with transaction.atomic(using=using):
-                    obj.save(
-                        force_insert=must_create,
-                        force_update=not must_create,
-                        using=using,
-                    )
+            # This code MOST run in a transaction
+            async with transaction.atomic(using=using):
+                await obj.asave(
+                    force_insert=must_create,
+                    force_update=not must_create,
+                    using=using,
+                )
 
-            await sync_transaction()
         except IntegrityError:
             if must_create:
                 raise CreateError
