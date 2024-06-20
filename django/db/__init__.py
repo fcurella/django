@@ -36,6 +36,8 @@ __all__ = [
 
 connections = ConnectionHandler()
 
+new_connection = connections.new_connection
+
 router = ConnectionRouter()
 
 # For backwards compatibility. Prefer connections['default'] instead.
