@@ -1329,7 +1329,7 @@ class QuerySet(AltersData):
 
     _araw_delete.alters_data = True
 
-    def update(self, **kwargs):
+    def _compiler_for_update(self, **kwargs):
         """
         Update all elements in the current QuerySet, setting all the given
         fields to the appropriate values.
@@ -1363,15 +1363,31 @@ class QuerySet(AltersData):
 
         # Clear any annotations so that they won't be present in subqueries.
         query.annotations = {}
+        return query.get_compiler(self.db)
         with transaction.mark_for_rollback_on_error(using=self.db):
             rows = query.get_compiler(self.db).execute_sql(CURSOR)
+        self._result_cache = None
+        return rows
+
+    def update(self, **kwargs):
+        """
+        Update all elements in the current QuerySet, setting all the given
+        fields to the appropriate values.
+        """
+        compiler = self._compiler_for_update(**kwargs)
+        with transaction.mark_for_rollback_on_error(using=self.db):
+            rows = compiler.execute_sql(CURSOR)
         self._result_cache = None
         return rows
 
     update.alters_data = True
 
     async def aupdate(self, **kwargs):
-        return await sync_to_async(self.update)(**kwargs)
+        compiler = self._compiler_for_update(**kwargs)
+        with transaction.amark_for_rollback_on_error(using=self.db):
+            rows = await compiler.aexecute_sql(CURSOR)
+        self._result_cache = None
+        return rows
 
     aupdate.alters_data = True
 
