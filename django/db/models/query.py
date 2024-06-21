@@ -690,7 +690,10 @@ class QuerySet(AltersData):
         return self.query.get_count(using=self.db)
 
     async def acount(self):
-        return await sync_to_async(self.count)()
+        if self._result_cache is not None:
+            return len(self._result_cache)
+
+        return await self.query.aget_count(using=self.db)
 
     def get(self, *args, **kwargs):
         """

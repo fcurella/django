@@ -442,7 +442,7 @@ class Query(BaseExpression):
             alias = None
         return target.get_col(alias, field)
 
-    def get_aggregation(self, using, aggregate_exprs):
+    def _get_aggregation(self, using, aggregate_exprs):
         """
         Return the dictionary with the values of the existing aggregations.
         """
@@ -613,7 +613,26 @@ class Query(BaseExpression):
         outer_query.select_for_update = False
         outer_query.select_related = False
         compiler = outer_query.get_compiler(using, elide_empty=elide_empty)
+        return compiler, outer_query, empty_set_result
+
+    def get_aggregation(self, using, aggregate_exprs):
+        compiler, outer_query, empty_set_result = self._get_aggregation(
+            using, aggregate_exprs
+        )
         result = compiler.execute_sql(SINGLE)
+        if result is None:
+            result = empty_set_result
+        else:
+            converters = compiler.get_converters(outer_query.annotation_select.values())
+            result = next(compiler.apply_converters((result,), converters))
+
+        return dict(zip(outer_query.annotation_select, result))
+
+    async def aget_aggregation(self, using, aggregate_exprs):
+        compiler, outer_query, empty_set_result = self._get_aggregation(
+            using, aggregate_exprs
+        )
+        result = await compiler.aexecute_sql(SINGLE)
         if result is None:
             result = empty_set_result
         else:
@@ -628,6 +647,14 @@ class Query(BaseExpression):
         """
         obj = self.clone()
         return obj.get_aggregation(using, {"__count": Count("*")})["__count"]
+
+    async def aget_count(self, using):
+        """
+        Perform a COUNT() query using the current filter constraints.
+        """
+        obj = self.clone()
+        aggregation = await obj.aget_aggregation(using, {"__count": Count("*")})
+        return aggregation["__count"]
 
     def has_filters(self):
         return self.where
