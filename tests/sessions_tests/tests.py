@@ -9,6 +9,8 @@ from http import cookies
 from pathlib import Path
 from unittest import mock
 
+from asgiref.sync import async_to_sync
+
 from django.conf import settings
 from django.contrib.sessions.backends.base import SessionBase, UpdateError
 from django.contrib.sessions.backends.cache import SessionStore as CacheSession
@@ -54,6 +56,11 @@ class SessionTestsMixin:
         # the /tmp (with some backends) and eventually overwhelm it after lots
         # of runs (think buildbots)
         self.addCleanup(self.session.delete)
+        self.addCleanup(async_to_sync(self.aclear_session))
+
+    async def aclear_session(self):
+        async with new_connection():
+            await self.session.adelete()
 
     def test_new_session(self):
         self.assertIs(self.session.modified, False)
@@ -62,18 +69,26 @@ class SessionTestsMixin:
     def test_get_empty(self):
         self.assertIsNone(self.session.get("cat"))
 
+    @unittest.skipUnless(
+        connection.vendor == "postgresql (async)", "PostgreSQL async tests"
+    )
     async def test_get_empty_async(self):
-        self.assertIsNone(await self.session.aget("cat"))
+        async with new_connection():
+            self.assertIsNone(await self.session.aget("cat"))
 
     def test_store(self):
         self.session["cat"] = "dog"
         self.assertIs(self.session.modified, True)
         self.assertEqual(self.session.pop("cat"), "dog")
 
+    @unittest.skipUnless(
+        connection.vendor == "postgresql (async)", "PostgreSQL async tests"
+    )
     async def test_store_async(self):
-        await self.session.aset("cat", "dog")
-        self.assertIs(self.session.modified, True)
-        self.assertEqual(await self.session.apop("cat"), "dog")
+        async with new_connection():
+            await self.session.aset("cat", "dog")
+            self.assertIs(self.session.modified, True)
+            self.assertEqual(await self.session.apop("cat"), "dog")
 
     def test_pop(self):
         self.session["some key"] = "exists"
@@ -86,16 +101,20 @@ class SessionTestsMixin:
         self.assertIs(self.session.modified, True)
         self.assertIsNone(self.session.get("some key"))
 
+    @unittest.skipUnless(
+        connection.vendor == "postgresql (async)", "PostgreSQL async tests"
+    )
     async def test_pop_async(self):
-        await self.session.aset("some key", "exists")
-        # Need to reset these to pretend we haven't accessed it:
-        self.accessed = False
-        self.modified = False
+        async with new_connection():
+            await self.session.aset("some key", "exists")
+            # Need to reset these to pretend we haven't accessed it:
+            self.accessed = False
+            self.modified = False
 
-        self.assertEqual(await self.session.apop("some key"), "exists")
-        self.assertIs(self.session.accessed, True)
-        self.assertIs(self.session.modified, True)
-        self.assertIsNone(await self.session.aget("some key"))
+            self.assertEqual(await self.session.apop("some key"), "exists")
+            self.assertIs(self.session.accessed, True)
+            self.assertIs(self.session.modified, True)
+            self.assertIsNone(await self.session.aget("some key"))
 
     def test_pop_default(self):
         self.assertEqual(
@@ -104,12 +123,16 @@ class SessionTestsMixin:
         self.assertIs(self.session.accessed, True)
         self.assertIs(self.session.modified, False)
 
+    @unittest.skipUnless(
+        connection.vendor == "postgresql (async)", "PostgreSQL async tests"
+    )
     async def test_pop_default_async(self):
-        self.assertEqual(
-            await self.session.apop("some key", "does not exist"), "does not exist"
-        )
-        self.assertIs(self.session.accessed, True)
-        self.assertIs(self.session.modified, False)
+        async with new_connection():
+            self.assertEqual(
+                await self.session.apop("some key", "does not exist"), "does not exist"
+            )
+            self.assertIs(self.session.accessed, True)
+            self.assertIs(self.session.modified, False)
 
     def test_pop_default_named_argument(self):
         self.assertEqual(
@@ -118,21 +141,29 @@ class SessionTestsMixin:
         self.assertIs(self.session.accessed, True)
         self.assertIs(self.session.modified, False)
 
+    @unittest.skipUnless(
+        connection.vendor == "postgresql (async)", "PostgreSQL async tests"
+    )
     async def test_pop_default_named_argument_async(self):
-        self.assertEqual(
-            await self.session.apop("some key", default="does not exist"),
-            "does not exist",
-        )
-        self.assertIs(self.session.accessed, True)
-        self.assertIs(self.session.modified, False)
+        async with new_connection():
+            self.assertEqual(
+                await self.session.apop("some key", default="does not exist"),
+                "does not exist",
+            )
+            self.assertIs(self.session.accessed, True)
+            self.assertIs(self.session.modified, False)
 
     def test_pop_no_default_keyerror_raised(self):
         with self.assertRaises(KeyError):
             self.session.pop("some key")
 
+    @unittest.skipUnless(
+        connection.vendor == "postgresql (async)", "PostgreSQL async tests"
+    )
     async def test_pop_no_default_keyerror_raised_async(self):
-        with self.assertRaises(KeyError):
-            await self.session.apop("some key")
+        async with new_connection():
+            with self.assertRaises(KeyError):
+                await self.session.apop("some key")
 
     def test_setdefault(self):
         self.assertEqual(self.session.setdefault("foo", "bar"), "bar")
@@ -140,11 +171,15 @@ class SessionTestsMixin:
         self.assertIs(self.session.accessed, True)
         self.assertIs(self.session.modified, True)
 
+    @unittest.skipUnless(
+        connection.vendor == "postgresql (async)", "PostgreSQL async tests"
+    )
     async def test_setdefault_async(self):
-        self.assertEqual(await self.session.asetdefault("foo", "bar"), "bar")
-        self.assertEqual(await self.session.asetdefault("foo", "baz"), "bar")
-        self.assertIs(self.session.accessed, True)
-        self.assertIs(self.session.modified, True)
+        async with new_connection():
+            self.assertEqual(await self.session.asetdefault("foo", "bar"), "bar")
+            self.assertEqual(await self.session.asetdefault("foo", "baz"), "bar")
+            self.assertIs(self.session.accessed, True)
+            self.assertIs(self.session.modified, True)
 
     def test_update(self):
         self.session.update({"update key": 1})
@@ -152,11 +187,15 @@ class SessionTestsMixin:
         self.assertIs(self.session.modified, True)
         self.assertEqual(self.session.get("update key", None), 1)
 
+    @unittest.skipUnless(
+        connection.vendor == "postgresql (async)", "PostgreSQL async tests"
+    )
     async def test_update_async(self):
-        await self.session.aupdate({"update key": 1})
-        self.assertIs(self.session.accessed, True)
-        self.assertIs(self.session.modified, True)
-        self.assertEqual(await self.session.aget("update key", None), 1)
+        async with new_connection():
+            await self.session.aupdate({"update key": 1})
+            self.assertIs(self.session.accessed, True)
+            self.assertIs(self.session.modified, True)
+            self.assertEqual(await self.session.aget("update key", None), 1)
 
     def test_has_key(self):
         self.session["some key"] = 1
@@ -166,13 +205,17 @@ class SessionTestsMixin:
         self.assertIs(self.session.accessed, True)
         self.assertIs(self.session.modified, False)
 
+    @unittest.skipUnless(
+        connection.vendor == "postgresql (async)", "PostgreSQL async tests"
+    )
     async def test_has_key_async(self):
-        await self.session.aset("some key", 1)
-        self.session.modified = False
-        self.session.accessed = False
-        self.assertIs(await self.session.ahas_key("some key"), True)
-        self.assertIs(self.session.accessed, True)
-        self.assertIs(self.session.modified, False)
+        async with new_connection():
+            await self.session.aset("some key", 1)
+            self.session.modified = False
+            self.session.accessed = False
+            self.assertIs(await self.session.ahas_key("some key"), True)
+            self.assertIs(self.session.accessed, True)
+            self.assertIs(self.session.modified, False)
 
     def test_values(self):
         self.assertEqual(list(self.session.values()), [])
@@ -184,15 +227,19 @@ class SessionTestsMixin:
         self.assertIs(self.session.accessed, True)
         self.assertIs(self.session.modified, False)
 
+    @unittest.skipUnless(
+        connection.vendor == "postgresql (async)", "PostgreSQL async tests"
+    )
     async def test_values_async(self):
-        self.assertEqual(list(await self.session.avalues()), [])
-        self.assertIs(self.session.accessed, True)
-        await self.session.aset("some key", 1)
-        self.session.modified = False
-        self.session.accessed = False
-        self.assertEqual(list(await self.session.avalues()), [1])
-        self.assertIs(self.session.accessed, True)
-        self.assertIs(self.session.modified, False)
+        async with new_connection():
+            self.assertEqual(list(await self.session.avalues()), [])
+            self.assertIs(self.session.accessed, True)
+            await self.session.aset("some key", 1)
+            self.session.modified = False
+            self.session.accessed = False
+            self.assertEqual(list(await self.session.avalues()), [1])
+            self.assertIs(self.session.accessed, True)
+            self.assertIs(self.session.modified, False)
 
     def test_keys(self):
         self.session["x"] = 1
@@ -203,12 +250,13 @@ class SessionTestsMixin:
         self.assertIs(self.session.modified, False)
 
     async def test_keys_async(self):
-        await self.session.aset("x", 1)
-        self.session.modified = False
-        self.session.accessed = False
-        self.assertEqual(list(await self.session.akeys()), ["x"])
-        self.assertIs(self.session.accessed, True)
-        self.assertIs(self.session.modified, False)
+        async with new_connection():
+            await self.session.aset("x", 1)
+            self.session.modified = False
+            self.session.accessed = False
+            self.assertEqual(list(await self.session.akeys()), ["x"])
+            self.assertIs(self.session.accessed, True)
+            self.assertIs(self.session.modified, False)
 
     def test_items(self):
         self.session["x"] = 1
@@ -218,13 +266,17 @@ class SessionTestsMixin:
         self.assertIs(self.session.accessed, True)
         self.assertIs(self.session.modified, False)
 
+    @unittest.skipUnless(
+        connection.vendor == "postgresql (async)", "PostgreSQL async tests"
+    )
     async def test_items_async(self):
-        await self.session.aset("x", 1)
-        self.session.modified = False
-        self.session.accessed = False
-        self.assertEqual(list(await self.session.aitems()), [("x", 1)])
-        self.assertIs(self.session.accessed, True)
-        self.assertIs(self.session.modified, False)
+        async with new_connection():
+            await self.session.aset("x", 1)
+            self.session.modified = False
+            self.session.accessed = False
+            self.assertEqual(list(await self.session.aitems()), [("x", 1)])
+            self.assertIs(self.session.accessed, True)
+            self.assertIs(self.session.modified, False)
 
     def test_clear(self):
         self.session["x"] = 1
@@ -240,9 +292,14 @@ class SessionTestsMixin:
         self.session.save()
         self.assertIs(self.session.exists(self.session.session_key), True)
 
+    @unittest.skipUnless(
+        connection.vendor == "postgresql (async)", "PostgreSQL async tests"
+    )
     async def test_save_async(self):
         async with new_connection():
             await self.session.asave()
+            self.assertIs(await self.session.aexists(self.session.session_key), True)
+        async with new_connection():
             self.assertIs(await self.session.aexists(self.session.session_key), True)
 
     def test_delete(self):
@@ -629,7 +686,7 @@ class SessionTestsMixin:
     @unittest.skipUnless(
         connection.vendor == "postgresql (async)", "PostgreSQL async tests"
     )
-    async def test_actual_expiry_async(self):
+    async def __test_actual_expiry_async(self):
         old_session_key = None
         new_session_key = None
         async with new_connection():
