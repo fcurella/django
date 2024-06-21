@@ -351,6 +351,8 @@ class SimpleTestCase(unittest.TestCase):
             testMethod, "__unittest_skip__", False
         )
 
+        connections._in_test = True
+
         # Convert async test methods.
         if iscoroutinefunction(testMethod):
             setattr(self, self._testMethodName, async_to_sync(testMethod))
