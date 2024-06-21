@@ -2,7 +2,7 @@ import logging
 
 from django.contrib.sessions.backends.base import CreateError, SessionBase, UpdateError
 from django.core.exceptions import SuspiciousOperation
-from django.db import DatabaseError, IntegrityError, router, transaction
+from django.db import DatabaseError, IntegrityError, new_connection, router, transaction
 from django.utils import timezone
 from django.utils.functional import cached_property
 
@@ -143,7 +143,7 @@ class SessionStore(SessionBase):
         using = router.db_for_write(self.model, instance=obj)
         try:
             # This code MOST run in a transaction
-            async with transaction.atomic(using=using):
+            async with new_connection(using=using):
                 await obj.asave(
                     force_insert=must_create,
                     force_update=not must_create,
