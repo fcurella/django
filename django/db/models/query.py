@@ -1246,7 +1246,7 @@ class QuerySet(AltersData):
             field_name=field_name,
         )
 
-    def delete(self):
+    def _delete(self):
         """Delete the records in the current QuerySet."""
         self._not_support_combined_queries("delete")
         if self.query.is_sliced:
@@ -1270,6 +1270,15 @@ class QuerySet(AltersData):
 
         collector = Collector(using=del_query.db, origin=self)
         collector.collect(del_query)
+        return collector
+        num_deleted, num_deleted_per_model = collector.delete()
+
+        # Clear the result cache, in case this QuerySet gets reused.
+        self._result_cache = None
+        return num_deleted, num_deleted_per_model
+
+    def delete(self):
+        collector = self._delete()
         num_deleted, num_deleted_per_model = collector.delete()
 
         # Clear the result cache, in case this QuerySet gets reused.
@@ -1280,7 +1289,12 @@ class QuerySet(AltersData):
     delete.queryset_only = True
 
     async def adelete(self):
-        return await sync_to_async(self.delete)()
+        collector = self._delete()
+        num_deleted, num_deleted_per_model = await collector.adelete()
+
+        # Clear the result cache, in case this QuerySet gets reused.
+        self._result_cache = None
+        return num_deleted, num_deleted_per_model
 
     adelete.alters_data = True
     adelete.queryset_only = True
@@ -1299,6 +1313,21 @@ class QuerySet(AltersData):
         return 0
 
     _raw_delete.alters_data = True
+
+    async def _araw_delete(self, using):
+        """
+        Delete objects found from the given queryset in single direct SQL
+        query. No signals are sent and there is no protection for cascades.
+        """
+        query = self.query.clone()
+        query.__class__ = sql.DeleteQuery
+        cursor = await query.get_compiler(using).aexecute_sql(CURSOR)
+        if cursor:
+            async with cursor:
+                return cursor.rowcount
+        return 0
+
+    _araw_delete.alters_data = True
 
     def update(self, **kwargs):
         """

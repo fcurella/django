@@ -23,6 +23,15 @@ class DeleteQuery(Query):
                 return cursor.rowcount
         return 0
 
+    async def ado_query(self, table, where, using):
+        self.alias_map = {table: self.alias_map[table]}
+        self.where = where
+        cursor = await self.get_compiler(using).aexecute_sql(CURSOR)
+        if cursor:
+            async with cursor:
+                return cursor.rowcount
+        return 0
+
     def delete_batch(self, pk_list, using):
         """
         Set up and execute delete queries for all the objects in pk_list.
@@ -40,6 +49,27 @@ class DeleteQuery(Query):
                 pk_list[offset : offset + GET_ITERATOR_CHUNK_SIZE],
             )
             num_deleted += self.do_query(
+                self.get_meta().db_table, self.where, using=using
+            )
+        return num_deleted
+
+    async def adelete_batch(self, pk_list, using):
+        """
+        Set up and execute delete queries for all the objects in pk_list.
+
+        More than one physical query may be executed if there are a
+        lot of values in pk_list.
+        """
+        # number of objects deleted
+        num_deleted = 0
+        field = self.get_meta().pk
+        for offset in range(0, len(pk_list), GET_ITERATOR_CHUNK_SIZE):
+            self.clear_where()
+            self.add_filter(
+                f"{field.attname}__in",
+                pk_list[offset : offset + GET_ITERATOR_CHUNK_SIZE],
+            )
+            num_deleted += await self.ado_query(
                 self.get_meta().db_table, self.where, using=using
             )
         return num_deleted
@@ -76,6 +106,15 @@ class UpdateQuery(Query):
                 "pk__in", pk_list[offset : offset + GET_ITERATOR_CHUNK_SIZE]
             )
             self.get_compiler(using).execute_sql(NO_RESULTS)
+
+    async def aupdate_batch(self, pk_list, values, using):
+        self.add_update_values(values)
+        for offset in range(0, len(pk_list), GET_ITERATOR_CHUNK_SIZE):
+            self.clear_where()
+            self.add_filter(
+                "pk__in", pk_list[offset : offset + GET_ITERATOR_CHUNK_SIZE]
+            )
+            await self.get_compiler(using).aexecute_sql(NO_RESULTS)
 
     def add_update_values(self, values):
         """
