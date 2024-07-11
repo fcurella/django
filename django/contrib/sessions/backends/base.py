@@ -249,6 +249,8 @@ class SessionBase:
                 self._session_cache = self.load()
         return self._session_cache
 
+    _session = property(_get_session)
+
     async def _aget_session(self, no_load=False):
         self.accessed = True
         try:
@@ -260,7 +262,7 @@ class SessionBase:
                 self._session_cache = await self.aload()
         return self._session_cache
 
-    _session = property(_get_session)
+    _asession = property(_aget_session)
 
     def get_session_cookie_age(self):
         return settings.SESSION_COOKIE_AGE

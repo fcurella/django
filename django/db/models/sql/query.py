@@ -17,7 +17,12 @@ from itertools import chain, count, product
 from string import ascii_uppercase
 
 from django.core.exceptions import FieldDoesNotExist, FieldError
-from django.db import DEFAULT_DB_ALIAS, NotSupportedError, connections
+from django.db import (
+    DEFAULT_DB_ALIAS,
+    NotSupportedError,
+    async_connections,
+    connections,
+)
 from django.db.models.aggregates import Count
 from django.db.models.constants import LOOKUP_SEP
 from django.db.models.expressions import (
@@ -443,7 +448,7 @@ class Query(BaseExpression):
             alias = None
         return target.get_col(alias, field)
 
-    def get_aggregation(self, using, aggregate_exprs):
+    def _get_aggregation(self, aggregate_exprs, using=None, connection=None):
         """
         Return the dictionary with the values of the existing aggregations.
         """
@@ -613,8 +618,28 @@ class Query(BaseExpression):
         outer_query.clear_limits()
         outer_query.select_for_update = False
         outer_query.select_related = False
-        compiler = outer_query.get_compiler(using, elide_empty=elide_empty)
+        compiler = outer_query.get_compiler(using, connection, elide_empty=elide_empty)
+        return compiler, outer_query, empty_set_result
+
+    def get_aggregation(self, using, aggregate_exprs):
+        compiler, outer_query, empty_set_result = self._get_aggregation(
+            aggregate_exprs, using=using
+        )
         result = compiler.execute_sql(SINGLE)
+        if result is None:
+            result = empty_set_result
+        else:
+            converters = compiler.get_converters(outer_query.annotation_select.values())
+            result = next(compiler.apply_converters((result,), converters))
+
+        return dict(zip(outer_query.annotation_select, result))
+
+    async def aget_aggregation(self, using, aggregate_exprs):
+        connection = async_connections.get_connection(using)
+        compiler, outer_query, empty_set_result = self._get_aggregation(
+            aggregate_exprs, connection=connection
+        )
+        result = await compiler.aexecute_sql(SINGLE)
         if result is None:
             result = empty_set_result
         else:
@@ -629,6 +654,14 @@ class Query(BaseExpression):
         """
         obj = self.clone()
         return obj.get_aggregation(using, {"__count": Count("*")})["__count"]
+
+    async def aget_count(self, using):
+        """
+        Perform a COUNT() query using the current filter constraints.
+        """
+        obj = self.clone()
+        aggregation = await obj.aget_aggregation(using, {"__count": Count("*")})
+        return aggregation["__count"]
 
     def has_filters(self):
         return self.where
@@ -659,6 +692,12 @@ class Query(BaseExpression):
         q = self.exists(using)
         compiler = q.get_compiler(using=using)
         return compiler.has_results()
+
+    async def ahas_results(self, using):
+        conn = async_connections.get_connection(using)
+        q = self.exists(using)
+        compiler = q.get_compiler(connection=conn)
+        return await compiler.ahas_results()
 
     def explain(self, using, format=None, **options):
         q = self.clone()
