@@ -9,6 +9,7 @@ from django.db import (
     IntegrityError,
     OperationalError,
     connection,
+    new_connection,
     transaction,
 )
 from django.test import (
@@ -577,3 +578,20 @@ class DurableTransactionTests(DurableTestsBase, TransactionTestCase):
 
 class DurableTests(DurableTestsBase, TestCase):
     pass
+
+
+@skipUnlessDBFeature("uses_savepoints")
+class AsyncTransactionTestCase(TransactionTestCase):
+    available_apps = ["transactions"]
+
+    async def test_commit(self):
+        async with new_connection():
+            self.assertEqual((await Reporter.objects.acount()), 0)
+
+        async with new_connection():
+            async with transaction.atomic(durable=True):
+                reporter = await Reporter.objects.acreate(first_name="Tintin")
+            self.assertEqual((await Reporter.objects.aget()), reporter)
+
+        async with new_connection():
+            self.assertEqual((await Reporter.objects.acount()), 0)

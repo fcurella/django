@@ -1,6 +1,8 @@
 import pkgutil
 from importlib import import_module
 
+from asgiref.local import Local
+
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 
@@ -12,6 +14,7 @@ from django.utils.module_loading import import_string
 
 DEFAULT_DB_ALIAS = "default"
 DJANGO_VERSION_PICKLE_KEY = "_django_version"
+NO_VALUE = object()
 
 
 class Error(Exception):
@@ -192,6 +195,71 @@ class ConnectionHandler(BaseConnectionHandler):
         db = self.settings[alias]
         backend = load_backend(db["ENGINE"])
         return backend.DatabaseWrapper(db, alias)
+
+
+class AsyncAlias(Local):
+    def __init__(self) -> None:
+        super().__init__()
+        self.connections: list[Local] = []
+
+    def __len__(self):
+        return len(self.connections)
+
+    def __iter__(self):
+        return iter(self.connections)
+
+    def __str__(self):
+        return ", ".join([str(id(conn)) for conn in self.connections])
+
+    def add_connection(self, connection):
+        self.connections = self.connections + [connection]
+
+    def pop(self):
+        conns = self.connections
+        conns.pop()
+        self.connections = conns
+
+
+class AsyncConnectionHandler(Local):
+    def __init__(self) -> None:
+        super().__init__()
+        self._from_testcase = False
+        self.aliases: dict[str, Local] = {}
+
+    def __len__(self):
+        return len(self.aliases)
+
+    def __contains__(self, item):
+        return item in self.aliases
+
+    def __getitem__(self, key):
+        return self.aliases[key]
+
+    def __setitem__(self, key, value):
+        aliases = self.aliases
+        aliases[key] = value
+        self.aliases = aliases
+
+    def __str__(self):
+        return str({alias: str(conns) for alias, conns in self.aliases.items()})
+
+    def add_connection(self, using, connection):
+        aliases = self.aliases
+        if using not in aliases:
+            aliases[using] = AsyncAlias()
+        aliases[using].add_connection(connection)
+        self.aliases = aliases
+
+    def pop_connection(self, using):
+        aliases = self.aliases
+        aliases[using].pop()
+        self.aliases = aliases
+
+    def get_connection(self, using):
+        aliases = self.aliases
+        if using not in aliases or len(aliases[using]) == 0:
+            raise RuntimeError()
+        return self.aliases[using].connections[-1]
 
 
 class ConnectionRouter:

@@ -3,7 +3,13 @@
 import unittest
 
 from django.core.exceptions import ImproperlyConfigured
-from django.db import DEFAULT_DB_ALIAS, ProgrammingError, connection
+from django.db import (
+    DEFAULT_DB_ALIAS,
+    ProgrammingError,
+    async_connections,
+    connection,
+    new_connection,
+)
 from django.db.utils import ConnectionHandler, load_backend
 from django.test import SimpleTestCase, TestCase
 from django.utils.connection import ConnectionDoesNotExist
@@ -58,6 +64,20 @@ class ConnectionHandlerTests(SimpleTestCase):
         )
         with self.assertRaisesMessage(ConnectionDoesNotExist, msg):
             conns["nonexistent"]
+
+    @unittest.skipUnless(connection.supports_async is True, "Async DB test")
+    async def test_new_connection(self):
+        with self.assertRaises(RuntimeError):
+            async_connections.get_connection(DEFAULT_DB_ALIAS)
+
+        async with new_connection():
+            conn1 = async_connections.get_connection(DEFAULT_DB_ALIAS)
+            async with new_connection():
+                conn2 = async_connections.get_connection(DEFAULT_DB_ALIAS)
+                self.assertNotEqual(conn1, conn2)
+            self.assertNotEqual(conn1, conn2)
+        with self.assertRaises(RuntimeError):
+            async_connections.get_connection(DEFAULT_DB_ALIAS)
 
 
 class DatabaseErrorWrapperTests(TestCase):
