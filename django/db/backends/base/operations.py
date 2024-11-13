@@ -11,6 +11,7 @@ from django.db import NotSupportedError, transaction
 from django.db.backends import utils
 from django.db.models.expressions import Col
 from django.utils import timezone
+from django.utils.codegen import from_codegen, generate_unasynced
 from django.utils.deprecation import RemovedInDjango60Warning
 from django.utils.encoding import force_str
 
@@ -208,12 +209,21 @@ class BaseDatabaseOperations:
         else:
             return ["DISTINCT"], []
 
+    @from_codegen
     def fetch_returned_insert_columns(self, cursor, returning_params):
         """
         Given a cursor object that has just performed an INSERT...RETURNING
         statement into a table, return the newly created data.
         """
         return cursor.fetchone()
+
+    @generate_unasynced()
+    async def afetch_returned_insert_columns(self, cursor, returning_params):
+        """
+        Given a cursor object that has just performed an INSERT...RETURNING
+        statement into a table, return the newly created data.
+        """
+        return await cursor.afetchone()
 
     def field_cast_sql(self, db_type, internal_type):
         """
