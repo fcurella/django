@@ -33,6 +33,7 @@ from django.db.models.utils import (
     resolve_callables,
 )
 from django.utils import timezone
+from django.utils.codegen import from_codegen, generate_unasynced
 from django.utils.deprecation import RemovedInDjango60Warning
 from django.utils.functional import cached_property, partition
 
@@ -1263,6 +1264,7 @@ class QuerySet(AltersData):
 
     aupdate.alters_data = True
 
+    @from_codegen
     def _update(self, values):
         """
         A version of update() that accepts field objects instead of field names.
@@ -1278,6 +1280,23 @@ class QuerySet(AltersData):
         query.annotations = {}
         self._result_cache = None
         return query.get_compiler(self.db).execute_sql(CURSOR)
+
+    @generate_unasynced()
+    async def _aupdate(self, values):
+        """
+        A version of update() that accepts field objects instead of field names.
+        Used primarily for model saving and not intended for use by general
+        code (it requires too much poking around at model internals to be
+        useful at that level).
+        """
+        if self.query.is_sliced:
+            raise TypeError("Cannot update a query once a slice has been taken.")
+        query = self.query.chain(sql.UpdateQuery)
+        query.add_update_fields(values)
+        # Clear any annotations so that they won't be present in subqueries.
+        query.annotations = {}
+        self._result_cache = None
+        return await query.get_compiler(self.db).aexecute_sql(CURSOR)
 
     _update.alters_data = True
     _update.queryset_only = False
@@ -1821,6 +1840,7 @@ class QuerySet(AltersData):
     # PRIVATE METHODS #
     ###################
 
+    @from_codegen
     def _insert(
         self,
         objs,
@@ -1848,8 +1868,43 @@ class QuerySet(AltersData):
         query.insert_values(fields, objs, raw=raw)
         return query.get_compiler(using=using).execute_sql(returning_fields)
 
+    ###################
+    # PRIVATE METHODS #
+    ###################
+
+    @generate_unasynced()
+    async def _ainsert(
+        self,
+        objs,
+        fields,
+        returning_fields=None,
+        raw=False,
+        using=None,
+        on_conflict=None,
+        update_fields=None,
+        unique_fields=None,
+    ):
+        """
+        Insert a new record for the given model. This provides an interface to
+        the InsertQuery class and is how Model.save() is implemented.
+        """
+        self._for_write = True
+        if using is None:
+            using = self.db
+        query = sql.InsertQuery(
+            self.model,
+            on_conflict=on_conflict,
+            update_fields=update_fields,
+            unique_fields=unique_fields,
+        )
+        query.insert_values(fields, objs, raw=raw)
+        return await query.get_compiler(using=using).aexecute_sql(returning_fields)
+
     _insert.alters_data = True
     _insert.queryset_only = False
+
+    _ainsert.alters_data = True
+    _ainsert.queryset_only = False
 
     def _batched_insert(
         self,
