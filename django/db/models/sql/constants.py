@@ -13,12 +13,10 @@ GET_ITERATOR_CHUNK_SIZE = 100
 MULTI = "multi"
 # a single row is expected
 SINGLE = "single"
-# do not return the rows, instead return the cursor
-# used for the query (this cursor needs to be closed
-# by the consumer)
-LEAK_CURSOR = "leak_cursor"
 # instead of returning the rows, return the row count
-ROW_COUNT = "rowcount"
+CURSOR = "cursor"
+LEAK_CURSOR = "leak_cursor"
+ROW_COUNT = "row_count"
 NO_RESULTS = "no results"
 
 ORDER_DIR = {
