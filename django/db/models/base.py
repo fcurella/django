@@ -5,7 +5,7 @@ from collections import defaultdict
 from functools import partialmethod
 from itertools import chain
 
-from asgiref.sync import sync_to_async
+from asgiref.sync import async_to_sync, sync_to_async
 
 import django
 from django.apps import apps
@@ -50,7 +50,7 @@ from django.db.models.signals import (
     pre_save,
 )
 from django.db.models.utils import AltersData, make_model_tuple
-from django.utils.codegen import from_codegen, generate_unasynced
+from django.utils.codegen import from_codegen, generate_unasynced, ASYNC_TRUTH_MARKER
 from django.utils.deprecation import RemovedInDjango60Warning
 from django.utils.encoding import force_str
 from django.utils.hashable import make_hashable
@@ -587,6 +587,24 @@ class Model(AltersData, metaclass=ModelBase):
         new._state.db = db
         return new
 
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        method_pairings = [
+            ("save", "asave"),
+        ]
+
+        for sync_variant, async_variant in method_pairings:
+            sync_defined = sync_variant in cls.__dict__
+            async_defined = async_variant in cls.__dict__
+            if sync_defined and not async_defined:
+                # async should fallback to sync
+                # print("Creating sync fallback")
+                setattr(cls, async_variant, sync_to_async(getattr(cls, sync_variant)))
+            if not sync_defined and async_defined:
+                # sync should fallback to async!
+                # print("Creating async fallback")
+                setattr(cls, sync_variant, async_to_sync(getattr(cls, async_variant)))
+
     def __repr__(self):
         return "<%s: %s>" % (self.__class__.__name__, self)
 
@@ -845,7 +863,7 @@ class Model(AltersData, metaclass=ModelBase):
         if args:
             force_insert, force_update, using, update_fields = self._parse_save_params(
                 *args,
-                method_name="asave",
+                method_name="asave" if False else "save",
                 force_insert=force_insert,
                 force_update=force_update,
                 using=using,
@@ -924,7 +942,7 @@ class Model(AltersData, metaclass=ModelBase):
         if args:
             force_insert, force_update, using, update_fields = self._parse_save_params(
                 *args,
-                method_name="asave",
+                method_name="asave" if ASYNC_TRUTH_MARKER else "save",
                 force_insert=force_insert,
                 force_update=force_update,
                 using=using,
