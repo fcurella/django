@@ -257,7 +257,9 @@ class ModelInstanceCreationTests(TestCase):
                 ):
                     a.save(*args, **{param_name: param_value})
 
+    @TestCase.use_async_connections
     async def test_asave_deprecation(self):
+        raise ValueError("foo")
         a = Article(headline="original", pub_date=datetime(2014, 5, 16))
         msg = "Passing positional arguments to asave() is deprecated"
         with self.assertWarnsMessage(RemovedInDjango60Warning, msg) as ctx:
@@ -270,7 +272,7 @@ class ModelInstanceCreationTests(TestCase):
         fields = ["headline"]
         with (
             self.assertWarns(RemovedInDjango60Warning),
-            mock.patch.object(a, "save_base") as mock_save_base,
+            mock.patch.object(a, "asave_base") as mock_save_base,
         ):
             await a.asave(None, 1, 2, fields)
         self.assertEqual(
@@ -325,6 +327,7 @@ class ModelInstanceCreationTests(TestCase):
         a.refresh_from_db()
         self.assertEqual(a.headline, "changed")
 
+    @TestCase.use_async_connections
     @ignore_warnings(category=RemovedInDjango60Warning)
     async def test_asave_positional_arguments(self):
         a = await Article.objects.acreate(
