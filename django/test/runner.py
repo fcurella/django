@@ -102,33 +102,6 @@ class DebugSQLTextTestResult(unittest.TextTestResult):
             )
 
 
-class PDBDebugResult(unittest.TextTestResult):
-    """
-    Custom result class that triggers a PDB session when an error or failure
-    occurs.
-    """
-
-    def addError(self, test, err):
-        super().addError(test, err)
-        self.debug(err)
-
-    def addFailure(self, test, err):
-        super().addFailure(test, err)
-        self.debug(err)
-
-    def addSubTest(self, test, subtest, err):
-        if err is not None:
-            self.debug(err)
-        super().addSubTest(test, subtest, err)
-
-    def debug(self, error):
-        self._restoreStdout()
-        self.buffer = False
-        exc_type, exc_value, traceback = error
-        print("\nOpening PDB: %r" % exc_value)
-        pdb.post_mortem(traceback)
-
-
 class DummyList:
     """
     Dummy list class for faking storage of results in unittest.TestResult.
@@ -669,6 +642,33 @@ class SuccessTrackingTextTestResult(unittest.TextTestResult):
 
 class SuccessTrackingTextTestRunner(unittest.TextTestRunner):
     resultclass = SuccessTrackingTextTestResult
+
+
+class PDBDebugResult(SuccessTrackingTextTestResult):
+    """
+    Custom result class that triggers a PDB session when an error or failure
+    occurs.
+    """
+
+    def addError(self, test, err):
+        super().addError(test, err)
+        self.debug(err)
+
+    def addFailure(self, test, err):
+        super().addFailure(test, err)
+        self.debug(err)
+
+    def addSubTest(self, test, subtest, err):
+        if err is not None:
+            self.debug(err)
+        super().addSubTest(test, subtest, err)
+
+    def debug(self, error):
+        self._restoreStdout()
+        self.buffer = False
+        exc_type, exc_value, traceback = error
+        print("\nOpening PDB: %r" % exc_value)
+        pdb.post_mortem(traceback)
 
 
 class DiscoverRunner:
