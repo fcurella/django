@@ -870,7 +870,6 @@ class Model(AltersData, metaclass=ModelBase):
                 using=using,
                 update_fields=update_fields,
             )
-
         self._prepare_related_fields_for_save(operation_name="save")
 
         using = using or router.db_for_write(self.__class__, instance=self)
@@ -949,13 +948,14 @@ class Model(AltersData, metaclass=ModelBase):
                 using=using,
                 update_fields=update_fields,
             )
-        if should_use_sync_fallback(ASYNC_TRUTH_MARKER):
-            return await sync_to_async(self.save)(
-                force_insert=force_insert,
-                force_update=force_update,
-                using=using,
-                update_fields=update_fields,
-            )
+        if ASYNC_TRUTH_MARKER:
+            if should_use_sync_fallback(ASYNC_TRUTH_MARKER):
+                return await sync_to_async(self.save)(
+                    force_insert=force_insert,
+                    force_update=force_update,
+                    using=using,
+                    update_fields=update_fields,
+                )
         self._prepare_related_fields_for_save(operation_name="save")
 
         using = using or router.db_for_write(self.__class__, instance=self)
