@@ -13,6 +13,7 @@ from django.db.backends.postgresql.psycopg_any import (
 from django.db.backends.utils import split_tzname_delta
 from django.db.models.constants import OnConflict
 from django.db.models.functions import Cast
+from django.utils.codegen import from_codegen, generate_unasynced
 from django.utils.regex_helper import _lazy_re_compile
 
 
@@ -148,12 +149,21 @@ class DatabaseOperations(BaseDatabaseOperations):
     def deferrable_sql(self):
         return " DEFERRABLE INITIALLY DEFERRED"
 
+    @from_codegen
     def fetch_returned_insert_rows(self, cursor):
         """
         Given a cursor object that has just performed an INSERT...RETURNING
         statement into a table, return the tuple of returned data.
         """
         return cursor.fetchall()
+
+    @generate_unasynced()
+    async def afetch_returned_insert_rows(self, cursor):
+        """
+        Given a cursor object that has just performed an INSERT...RETURNING
+        statement into a table, return the tuple of returned data.
+        """
+        return await cursor.fetchall()
 
     def lookup_cast(self, lookup_type, internal_type=None):
         lookup = "%s"
