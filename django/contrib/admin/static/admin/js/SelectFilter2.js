@@ -15,7 +15,8 @@ Requires core.js and SelectBox.js.
             const from_box = document.getElementById(field_id);
             from_box.id += '_from'; // change its ID
             from_box.className = 'filtered';
-            from_box.setAttribute('aria-labelledby', field_id + '_from_title');
+            from_box.setAttribute('aria-labelledby', field_id + '_from_label');
+            from_box.setAttribute('aria-describedby', `${field_id}_helptext ${field_id}_choose_helptext`);
 
             for (const p of from_box.parentNode.getElementsByTagName('p')) {
                 if (p.classList.contains("info")) {
@@ -42,12 +43,20 @@ Requires core.js and SelectBox.js.
             const selector_available_title = quickElement('div', selector_available);
             selector_available_title.id = field_id + '_from_title';
             selector_available_title.className = 'selector-available-title';
-            quickElement('label', selector_available_title, interpolate(gettext('Available %s') + ' ', [field_name]), 'for', field_id + '_from');
+            quickElement(
+                'label',
+                selector_available_title,
+                interpolate(gettext('Available %s') + ' ', [field_name]),
+                'id',
+                field_id + '_from_label',
+                'for',
+                field_id + '_from'
+            );
             quickElement(
                 'p',
                 selector_available_title,
                 interpolate(gettext('Choose %s by selecting them and then select the "Choose" arrow button.'), [field_name]),
-                'class', 'helptext'
+                'id', `${field_id}_choose_helptext`, 'class', 'helptext'
             );
 
             const filter_p = quickElement('p', selector_available, '', 'id', field_id + '_filter');
@@ -72,7 +81,8 @@ Requires core.js and SelectBox.js.
                 selector_available,
                 interpolate(gettext('Choose all %s'), [field_name]),
                 'id', field_id + '_add_all',
-                'class', 'selector-chooseall'
+                'class', 'selector-chooseall',
+                'type', 'button'
             );
 
             // <ul class="selector-chooser">
@@ -83,14 +93,16 @@ Requires core.js and SelectBox.js.
                 quickElement('li', selector_chooser),
                 interpolate(gettext('Choose selected %s'), [field_name]),
                 'id', field_id + '_add',
-                'class', 'selector-add'
+                'class', 'selector-add',
+                'type', 'button'
             );
             const remove_button = quickElement(
                 'button',
                 quickElement('li', selector_chooser),
-                interpolate(gettext('Remove selected chosen %s'), [field_name]),
+                interpolate(gettext('Remove selected %s'), [field_name]),
                 'id', field_id + '_remove',
-                'class', 'selector-remove'
+                'class', 'selector-remove',
+                'type', 'button'
             );
 
             // <div class="selector-chosen">
@@ -99,12 +111,20 @@ Requires core.js and SelectBox.js.
             const selector_chosen_title = quickElement('div', selector_chosen);
             selector_chosen_title.className = 'selector-chosen-title';
             selector_chosen_title.id = field_id + '_to_title';
-            quickElement('label', selector_chosen_title, interpolate(gettext('Chosen %s') + ' ', [field_name]), 'for', field_id + '_to');
+            quickElement(
+                'label',
+                selector_chosen_title,
+                interpolate(gettext('Chosen %s') + ' ', [field_name]),
+                'id',
+                field_id + '_to_label',
+                'for',
+                field_id + '_to'
+            );
             quickElement(
                 'p',
                 selector_chosen_title,
                 interpolate(gettext('Remove %s by selecting them and then select the "Remove" arrow button.'), [field_name]),
-                'class', 'helptext'
+                'id', `${field_id}_remove_helptext`, 'class', 'helptext'
             );
             
             const filter_selected_p = quickElement('p', selector_chosen, '', 'id', field_id + '_filter_selected');
@@ -131,7 +151,8 @@ Requires core.js and SelectBox.js.
                 'multiple', '',
                 'size', from_box.size,
                 'name', from_box.name,
-                'aria-labelledby', field_id + '_to_title',
+                'aria-labelledby', field_id + '_to_label',
+                'aria-describedby', `${field_id}_helptext ${field_id}_remove_helptext`,
                 'class', 'filtered'
             );
             const warning_footer = quickElement('div', selector_chosen, '', 'class', 'list-footer-display');
@@ -142,14 +163,15 @@ Requires core.js and SelectBox.js.
                 selector_chosen,
                 interpolate(gettext('Remove all %s'), [field_name]),
                 'id', field_id + '_remove_all',
-                'class', 'selector-clearall'
+                'class', 'selector-clearall',
+                'type', 'button'
             );
 
             from_box.name = from_box.name + '_old';
 
             // Set up the JavaScript event handlers for the select box filter interface
             const move_selection = function(e, elem, move_func, from, to) {
-                if (elem.classList.contains('active')) {
+                if (!elem.hasAttribute('disabled')) {
                     move_func(from, to);
                     SelectFilter.refresh_icons(field_id);
                     SelectFilter.refresh_filtered_selects(field_id);
@@ -248,13 +270,12 @@ Requires core.js and SelectBox.js.
         refresh_icons: function(field_id) {
             const from = document.getElementById(field_id + '_from');
             const to = document.getElementById(field_id + '_to');
-            // Active if at least one item is selected
-            document.getElementById(field_id + '_add').classList.toggle('active', SelectFilter.any_selected(from));
-            document.getElementById(field_id + '_remove').classList.toggle('active', SelectFilter.any_selected(to));
-            // Active if the corresponding box isn't empty
-            document.getElementById(field_id + '_add_all').classList.toggle('active', from.querySelector('option'));
-            document.getElementById(field_id + '_remove_all').classList.toggle('active', to.querySelector('option'));
-            SelectFilter.refresh_filtered_warning(field_id);
+            // Disabled if no items are selected.
+            document.getElementById(field_id + '_add').disabled = !SelectFilter.any_selected(from);
+            document.getElementById(field_id + '_remove').disabled = !SelectFilter.any_selected(to);
+            // Disabled if the corresponding box is empty.
+            document.getElementById(field_id + '_add_all').disabled = !from.querySelector('option');
+            document.getElementById(field_id + '_remove_all').disabled = !to.querySelector('option');
         },
         filter_key_press: function(event, field_id, source, target) {
             const source_box = document.getElementById(field_id + source);

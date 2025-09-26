@@ -9,6 +9,7 @@ from django.db import (
     IntegrityError,
     OperationalError,
     connection,
+    new_connection,
     transaction,
 )
 from django.test import (
@@ -244,7 +245,9 @@ class AtomicTests(TransactionTestCase):
 
 
 class AtomicInsideTransactionTests(AtomicTests):
-    """All basic tests for atomic should also pass within an existing transaction."""
+    """
+    All basic tests for atomic should also pass within an existing transaction.
+    """
 
     def setUp(self):
         self.atomic = transaction.atomic()
@@ -255,7 +258,9 @@ class AtomicInsideTransactionTests(AtomicTests):
 
 
 class AtomicWithoutAutocommitTests(AtomicTests):
-    """All basic tests for atomic should also pass when autocommit is turned off."""
+    """
+    All basic tests for atomic should also pass when autocommit is turned off.
+    """
 
     def setUp(self):
         transaction.set_autocommit(False)
@@ -393,7 +398,9 @@ class AtomicMySQLTests(TransactionTestCase):
 
     @skipIf(threading is None, "Test requires threading")
     def test_implicit_savepoint_rollback(self):
-        """MySQL implicitly rolls back savepoints when it deadlocks (#22291)."""
+        """
+        MySQL implicitly rolls back savepoints when it deadlocks (#22291).
+        """
         Reporter.objects.create(id=1)
         Reporter.objects.create(id=2)
 
@@ -457,7 +464,8 @@ class AtomicMiscTests(TransactionTestCase):
                         sid = connection.savepoint_ids[-1]
                         raise Exception("Oops")
 
-                # This is expected to fail because the savepoint no longer exists.
+                # This is expected to fail because the savepoint no longer
+                # exists.
                 connection.savepoint_rollback(sid)
 
     def test_mark_for_rollback_on_error_in_transaction(self):
@@ -497,8 +505,8 @@ class AtomicMiscTests(TransactionTestCase):
 
                 raise Exception("Oops")
 
-            # Ensure that `mark_for_rollback_on_error` did not mark the transaction
-            # as broken, since we are in autocommit mode …
+            # Ensure that `mark_for_rollback_on_error` did not mark the
+            # transaction as broken, since we are in autocommit mode …
             self.assertFalse(transaction.get_connection().needs_rollback)
 
         # … and further queries work nicely.
@@ -526,7 +534,9 @@ class NonAutocommitTests(TransactionTestCase):
         Reporter.objects.last()
 
     def test_orm_query_without_autocommit(self):
-        """#24921 -- ORM queries must be possible after set_autocommit(False)."""
+        """
+        #24921 -- ORM queries must be possible after set_autocommit(False).
+        """
         Reporter.objects.create(first_name="Tintin")
 
 
@@ -577,3 +587,93 @@ class DurableTransactionTests(DurableTestsBase, TransactionTestCase):
 
 class DurableTests(DurableTestsBase, TestCase):
     pass
+
+
+@skipUnlessDBFeature("uses_savepoints", "supports_async")
+class AsyncTransactionTestCase(TransactionTestCase):
+    available_apps = ["transactions"]
+
+    async def test_new_connection_nested(self):
+        async with new_connection() as connection:
+            async with new_connection() as connection2:
+                await connection2.aset_autocommit(False)
+                async with connection2.acursor() as cursor2:
+                    await cursor2.aexecute(
+                        "INSERT INTO transactions_reporter "
+                        "(first_name, last_name, email) "
+                        "VALUES (%s, %s, %s)",
+                        ("Sarah", "Hatoff", ""),
+                    )
+                    await cursor2.aexecute("SELECT * FROM transactions_reporter")
+                    result = await cursor2.afetchmany()
+                    assert len(result) == 1
+
+            async with connection.acursor() as cursor:
+                await cursor.aexecute("SELECT * FROM transactions_reporter")
+                result = await cursor.afetchmany()
+                assert len(result) == 1
+
+    async def test_new_connection_nested2(self):
+        async with new_connection() as connection:
+            async with connection.acursor() as cursor:
+                await cursor.aexecute(
+                    "INSERT INTO transactions_reporter (first_name, last_name, email) "
+                    "VALUES (%s, %s, %s)",
+                    ("Sarah", "Hatoff", ""),
+                )
+                await cursor.aexecute("SELECT * FROM transactions_reporter")
+                result = await cursor.afetchmany()
+                assert len(result) == 1
+
+            async with new_connection() as connection2:
+                await connection2.aset_autocommit(False)
+                async with connection2.acursor() as cursor2:
+                    await cursor2.aexecute("SELECT * FROM transactions_reporter")
+                    result = await cursor2.afetchmany()
+                    # This connection won't see any rows, because the outer one
+                    # hasn't committed yet.
+                    assert len(result) == 0
+
+    async def test_new_connection_nested3(self):
+        async with new_connection() as connection:
+            async with new_connection() as connection2:
+                await connection2.aset_autocommit(False)
+                assert id(connection) != id(connection2)
+                async with connection2.acursor() as cursor2:
+                    await cursor2.aexecute(
+                        "INSERT INTO transactions_reporter "
+                        "(first_name, last_name, email) "
+                        "VALUES (%s, %s, %s)",
+                        ("Sarah", "Hatoff", ""),
+                    )
+                    await cursor2.aexecute("SELECT * FROM transactions_reporter")
+                    result = await cursor2.afetchmany()
+                    assert len(result) == 1
+
+                # Outermost connection doesn't see what the innermost did,
+                # because the innermost connection hasn't exited yet.
+                async with connection.acursor() as cursor:
+                    await cursor.aexecute("SELECT * FROM transactions_reporter")
+                    result = await cursor.afetchmany()
+                    assert len(result) == 0
+
+    async def test_asavepoint(self):
+        async with new_connection() as connection:
+            async with connection.acursor() as cursor:
+                sid = await connection.asavepoint()
+                assert sid is not None
+
+                await cursor.aexecute(
+                    "INSERT INTO transactions_reporter (first_name, last_name, email) "
+                    "VALUES (%s, %s, %s)",
+                    ("Archibald", "Haddock", ""),
+                )
+                await cursor.aexecute("SELECT * FROM transactions_reporter")
+                result = await cursor.afetchmany(size=5)
+                assert len(result) == 1
+                assert result[0][1:] == ("Archibald", "Haddock", "")
+
+                await connection.asavepoint_rollback(sid)
+                await cursor.aexecute("SELECT * FROM transactions_reporter")
+                result = await cursor.fetchmany(size=5)
+                assert len(result) == 0

@@ -1,6 +1,8 @@
 import pkgutil
 from importlib import import_module
 
+from asgiref.local import Local
+
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 
@@ -63,6 +65,9 @@ class DatabaseErrorWrapper:
         It must have a Database attribute defining PEP-249 exceptions.
         """
         self.wrapper = wrapper
+
+    def __del__(self):
+        del self.wrapper
 
     def __enter__(self):
         pass
@@ -194,6 +199,89 @@ class ConnectionHandler(BaseConnectionHandler):
         return backend.DatabaseWrapper(db, alias)
 
 
+class AsyncAlias:
+    """
+    A Context-aware list of connections.
+    """
+
+    def __init__(self) -> None:
+        self._connections = Local()
+        setattr(self._connections, "_stack", [])
+
+    @property
+    def connections(self):
+        return getattr(self._connections, "_stack", [])
+
+    def __len__(self):
+        return len(self.connections)
+
+    def __iter__(self):
+        return iter(self.connections)
+
+    def __str__(self):
+        return ", ".join([str(id(conn)) for conn in self.connections])
+
+    def __repr__(self):
+        return f"<{self.__class__.__name__}: {len(self.connections)} connections>"
+
+    def add_connection(self, connection):
+        setattr(self._connections, "_stack", self.connections + [connection])
+
+    def pop(self):
+        conns = self.connections
+        conns.pop()
+        setattr(self._connections, "_stack", conns)
+
+
+class AsyncConnectionHandler:
+    """
+    Context-aware class to store async connections, mapped by alias name.
+    """
+
+    _from_testcase = False
+
+    def __init__(self) -> None:
+        self._aliases = Local()
+        self._connection_count = Local()
+        setattr(self._connection_count, "value", 0)
+
+    def __getitem__(self, alias):
+        try:
+            async_alias = getattr(self._aliases, alias)
+        except AttributeError:
+            async_alias = AsyncAlias()
+            setattr(self._aliases, alias, async_alias)
+        return async_alias
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__}: {self.count} connections>"
+
+    @property
+    def count(self):
+        return getattr(self._connection_count, "value", 0)
+
+    @property
+    def empty(self):
+        return self.count == 0
+
+    def add_connection(self, using, connection):
+        self[using].add_connection(connection)
+        setattr(self._connection_count, "value", self.count + 1)
+
+    async def pop_connection(self, using):
+        await self[using].connections[-1].aclose_pool()
+        self[using].connections.pop()
+        setattr(self._connection_count, "value", self.count - 1)
+
+    def get_connection(self, using):
+        alias = self[using]
+        if len(alias.connections) == 0:
+            raise ConnectionDoesNotExist(
+                f"There are no async connections using the '{using}' alias."
+            )
+        return alias.connections[-1]
+
+
 class ConnectionRouter:
     def __init__(self, routers=None):
         """
@@ -221,7 +309,8 @@ class ConnectionRouter:
                 try:
                     method = getattr(router, action)
                 except AttributeError:
-                    # If the router doesn't have a method, skip to the next one.
+                    # If the router doesn't have a method, skip to the next
+                    # one.
                     pass
                 else:
                     chosen_db = method(model, **hints)

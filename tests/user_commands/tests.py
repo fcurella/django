@@ -1,7 +1,7 @@
 import os
 import sys
 from argparse import ArgumentDefaultsHelpFormatter
-from io import StringIO
+from io import BytesIO, StringIO, TextIOWrapper
 from pathlib import Path
 from unittest import mock
 
@@ -11,6 +11,7 @@ from django.apps import apps
 from django.core import management
 from django.core.checks import Tags
 from django.core.management import BaseCommand, CommandError, find_commands
+from django.core.management.base import OutputWrapper
 from django.core.management.utils import (
     find_command,
     get_random_secret_key,
@@ -26,6 +27,29 @@ from django.utils import translation
 
 from .management.commands import dance
 from .utils import AssertFormatterFailureCaughtContext
+
+
+class OutputWrapperTests(SimpleTestCase):
+    def test_unhandled_exceptions(self):
+        cases = [
+            StringIO("Hello world"),
+            TextIOWrapper(BytesIO(b"Hello world")),
+        ]
+        for out in cases:
+            with self.subTest(out=out):
+                wrapper = OutputWrapper(out)
+                out.close()
+
+                unraisable_exceptions = []
+
+                def unraisablehook(unraisable):
+                    unraisable_exceptions.append(unraisable)
+                    sys.__unraisablehook__(unraisable)
+
+                with mock.patch.object(sys, "unraisablehook", unraisablehook):
+                    del wrapper
+
+                self.assertEqual(unraisable_exceptions, [])
 
 
 # A minimal set of apps to avoid system checks running on all apps.
@@ -464,8 +488,8 @@ class CommandRunTests(AdminScriptTestCase):
             "settings.py",
             apps=["django.contrib.staticfiles", "user_commands"],
             sdict={
-                # (staticfiles.E001) The STATICFILES_DIRS setting is not a tuple or
-                # list.
+                # (staticfiles.E001) The STATICFILES_DIRS setting is not a
+                # tuple or list.
                 "STATICFILES_DIRS": '"foo"',
             },
         )
@@ -541,11 +565,15 @@ class UtilsTests(SimpleTestCase):
         self.assertEqual(normalize_path_patterns(["foo/bar/*", "bar/*/"]), expected)
 
     def test_run_formatters_handles_oserror_for_black_path(self):
+        test_files_path = Path(__file__).parent / "test_files"
         cases = [
-            (FileNotFoundError, "nonexistent"),
+            (
+                FileNotFoundError,
+                str(test_files_path / "nonexistent"),
+            ),
             (
                 OSError if sys.platform == "win32" else PermissionError,
-                str(Path(__file__).parent / "test_files" / "black"),
+                str(test_files_path / "black"),
             ),
         ]
         for exception, location in cases:

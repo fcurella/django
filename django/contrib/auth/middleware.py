@@ -50,10 +50,10 @@ class LoginRequiredMiddleware(MiddlewareMixin):
     redirect_field_name = REDIRECT_FIELD_NAME
 
     def process_view(self, request, view_func, view_args, view_kwargs):
-        if request.user.is_authenticated:
+        if not getattr(view_func, "login_required", True):
             return None
 
-        if not getattr(view_func, "login_required", True):
+        if request.user.is_authenticated:
             return None
 
         return self.handle_no_permission(request, view_func)
@@ -95,13 +95,16 @@ class RemoteUserMiddleware:
     Middleware for utilizing web-server-provided authentication.
 
     If request.user is not authenticated, then this middleware attempts to
-    authenticate the username passed in the ``REMOTE_USER`` request header.
+    authenticate the username from the ``REMOTE_USER`` key in ``request.META``,
+    an environment variable commonly set by the webserver.
+
     If authentication is successful, the user is automatically logged in to
     persist the user in the session.
 
-    The header used is configurable and defaults to ``REMOTE_USER``.  Subclass
-    this class and change the ``header`` attribute if you need to use a
-    different header.
+    The ``request.META`` key is configurable and defaults to ``REMOTE_USER``.
+    Subclass this class and change the ``header`` attribute if you need to
+    use a different key from ``request.META``, for example a HTTP request
+    header.
     """
 
     sync_capable = True
@@ -116,20 +119,24 @@ class RemoteUserMiddleware:
             markcoroutinefunction(self)
         super().__init__()
 
-    # Name of request header to grab username from.  This will be the key as
-    # used in the request.META dictionary, i.e. the normalization of headers to
-    # all uppercase and the addition of "HTTP_" prefix apply.
+    # Name of request.META key to grab username from. Note that for
+    # request headers, normalization to all uppercase and the addition
+    # of a "HTTP_" prefix apply.
     header = "REMOTE_USER"
     force_logout_if_no_header = True
 
     def __call__(self, request):
         if self.is_async:
             return self.__acall__(request)
+        self.process_request(request)
+        return self.get_response(request)
+
+    def process_request(self, request):
         # AuthenticationMiddleware is required so that request.user exists.
         if not hasattr(request, "user"):
             raise ImproperlyConfigured(
                 "The Django remote user auth middleware requires the"
-                " authentication middleware to be installed.  Edit your"
+                " authentication middleware to be installed. Edit your"
                 " MIDDLEWARE setting to insert"
                 " 'django.contrib.auth.middleware.AuthenticationMiddleware'"
                 " before the RemoteUserMiddleware class."
@@ -142,13 +149,13 @@ class RemoteUserMiddleware:
             # AnonymousUser by the AuthenticationMiddleware).
             if self.force_logout_if_no_header and request.user.is_authenticated:
                 self._remove_invalid_user(request)
-            return self.get_response(request)
+            return
         # If the user is already authenticated and that user is the user we are
         # getting passed in the headers, then the correct user is already
         # persisted in the session and we don't need to continue.
         if request.user.is_authenticated:
             if request.user.get_username() == self.clean_username(username, request):
-                return self.get_response(request)
+                return
             else:
                 # An authenticated user is associated with the request, but
                 # it does not match the authorized user in the header.
@@ -158,18 +165,21 @@ class RemoteUserMiddleware:
         # to authenticate the user.
         user = auth.authenticate(request, remote_user=username)
         if user:
-            # User is valid.  Set request.user and persist user in the session
+            # User is valid. Set request.user and persist user in the session
             # by logging the user in.
             request.user = user
             auth.login(request, user)
-        return self.get_response(request)
 
     async def __acall__(self, request):
+        await self.aprocess_request(request)
+        return await self.get_response(request)
+
+    async def aprocess_request(self, request):
         # AuthenticationMiddleware is required so that request.user exists.
         if not hasattr(request, "user"):
             raise ImproperlyConfigured(
                 "The Django remote user auth middleware requires the"
-                " authentication middleware to be installed.  Edit your"
+                " authentication middleware to be installed. Edit your"
                 " MIDDLEWARE setting to insert"
                 " 'django.contrib.auth.middleware.AuthenticationMiddleware'"
                 " before the RemoteUserMiddleware class."
@@ -184,14 +194,14 @@ class RemoteUserMiddleware:
                 user = await request.auser()
                 if user.is_authenticated:
                     await self._aremove_invalid_user(request)
-            return await self.get_response(request)
+            return
         user = await request.auser()
         # If the user is already authenticated and that user is the user we are
         # getting passed in the headers, then the correct user is already
         # persisted in the session and we don't need to continue.
         if user.is_authenticated:
             if user.get_username() == self.clean_username(username, request):
-                return await self.get_response(request)
+                return
             else:
                 # An authenticated user is associated with the request, but
                 # it does not match the authorized user in the header.
@@ -201,12 +211,10 @@ class RemoteUserMiddleware:
         # to authenticate the user.
         user = await auth.aauthenticate(request, remote_user=username)
         if user:
-            # User is valid.  Set request.user and persist user in the session
+            # User is valid. Set request.user and persist user in the session
             # by logging the user in.
             request.user = user
             await auth.alogin(request, user)
-
-        return await self.get_response(request)
 
     def clean_username(self, username, request):
         """
@@ -259,10 +267,10 @@ class PersistentRemoteUserMiddleware(RemoteUserMiddleware):
     Middleware for web-server provided authentication on logon pages.
 
     Like RemoteUserMiddleware but keeps the user authenticated even if
-    the header (``REMOTE_USER``) is not found in the request. Useful
-    for setups when the external authentication via ``REMOTE_USER``
-    is only expected to happen on some "logon" URL and the rest of
-    the application wants to use Django's authentication mechanism.
+    the ``request.META`` key is not found in the request. Useful for
+    setups when the external authentication is only expected to happen
+    on some "logon" URL and the rest of the application wants to use
+    Django's authentication mechanism.
     """
 
     force_logout_if_no_header = False

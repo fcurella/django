@@ -47,14 +47,15 @@ Keep old patches up-to-date
 Oftentimes the codebase will change between a patch being submitted and the
 time it gets reviewed. Make sure it still applies cleanly and functions as
 expected. Updating a patch is both useful and important! See more on
-:doc:`writing-code/submitting-patches`.
+:ref:`patch-review-checklist`.
 
 Write some documentation
 ------------------------
 
 Django's documentation is great but it can always be improved. Did you find a
 typo? Do you think that something should be clarified? Go ahead and suggest a
-documentation patch! See also the guide on :doc:`writing-documentation`.
+documentation patch! See also the guide on
+:doc:`/internals/contributing/writing-documentation`.
 
 .. note::
 
@@ -132,7 +133,7 @@ but not completely certain, you might also try asking on the
 ``#contributing-getting-started`` channel in the `Django Discord server`_ to
 see if someone else can confirm your suspicions.
 
-.. _`Django Discord server`: https://discord.gg/xcRH6mN4fa
+.. _`Django Discord server`: https://chat.djangoproject.com
 
 Wait for feedback, and respond to feedback that you receive
 -----------------------------------------------------------
